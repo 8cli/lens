@@ -6,6 +6,7 @@ Mirrors JS src/index.js.
 
 import json
 import os
+import sys
 import time
 
 from aiohttp import web
