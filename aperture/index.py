@@ -10,12 +10,16 @@ import time
 
 from aiohttp import web
 
-from .helpers import error_response, cors_headers
+from .helpers import uid, error_response, cors_headers
 from .middleware.auth import authenticate
 from .middleware.rate_limiter import create_rate_limiter
+from .middleware.logger import Logger
 from .handlers.chat import handle_chat_completions
 from .handlers.responses import handle_responses_api
 from .handlers.anthropic import handle_anthropic_messages
+
+
+VERSION = "1.0.0"
 
 
 def _detect_route(path: str, body: dict) -> str:
@@ -72,6 +76,57 @@ def _handle_list_models(request: web.Request) -> web.Response:
     return web.json_response({"data": models}, headers=cors_headers())
 
 
+async def _handle_health(request: web.Request) -> web.Response:
+    """Health check endpoint."""
+    return web.json_response(
+        {"status": "ok", "version": VERSION},
+        headers=cors_headers(),
+    )
+
+
+# --- Logging middleware ---
+
+@web.middleware
+async def logging_middleware(request: web.Request, handler) -> web.Response:
+    """Wraps every request with structured logging (request_id, timing, errors)."""
+    request["request_id"] = uid("req_")
+    log = Logger(request["request_id"])
+    request["log"] = log
+
+    log.info("request.start", {
+        "method": request.method,
+        "path": request.path,
+        "remote": request.remote or request.headers.get("X-Forwarded-For", ""),
+    })
+
+    start = time.time()
+    try:
+        response = await handler(request)
+        elapsed = int((time.time() - start) * 1000)
+        log.info("request.end", {
+            "status": response.status,
+            "elapsed_ms": elapsed,
+        })
+        return response
+    except web.HTTPException as exc:
+        elapsed = int((time.time() - start) * 1000)
+        log.warn("request.http_error", {
+            "status": exc.status,
+            "elapsed_ms": elapsed,
+        })
+        raise
+    except Exception as exc:
+        elapsed = int((time.time() - start) * 1000)
+        log.error("request.error", {
+            "error": str(exc),
+            "type": type(exc).__name__,
+            "elapsed_ms": elapsed,
+        })
+        raise
+
+
+# --- CORS middleware ---
+
 @web.middleware
 async def cors_middleware(request: web.Request, handler) -> web.Response:
     if request.method == "OPTIONS":
@@ -89,6 +144,8 @@ async def cors_middleware(request: web.Request, handler) -> web.Response:
         raise
 
 
+# --- Rate limit middleware ---
+
 @web.middleware
 async def rate_limit_middleware(request: web.Request, handler) -> web.Response:
     if request.method == "GET":
@@ -103,6 +160,9 @@ async def rate_limit_middleware(request: web.Request, handler) -> web.Response:
 
     if not allowed:
         retry_after = max(1, int((reset_at - (time.time() * 1000)) / 1000))
+        log = request.get("log")
+        if log:
+            log.warn("rate_limit.exceeded", {"client_ip": client_ip, "retry_after": retry_after})
         return web.json_response(
             {
                 "error": {
@@ -122,6 +182,8 @@ async def rate_limit_middleware(request: web.Request, handler) -> web.Response:
     return await handler(request)
 
 
+# --- Auth middleware ---
+
 @web.middleware
 async def auth_middleware(request: web.Request, handler) -> web.Response:
     if request.method in ("GET", "OPTIONS"):
@@ -130,23 +192,41 @@ async def auth_middleware(request: web.Request, handler) -> web.Response:
     api_key = request.app.get("api_key") or os.environ.get("API_KEY", "")
     auth_response = authenticate(request, api_key)
     if auth_response is not None:
+        log = request.get("log")
+        if log:
+            log.warn("auth.failed", {
+                "path": request.path,
+                "has_auth_header": "Authorization" in request.headers,
+                "has_x_api_key": "x-api-key" in request.headers,
+            })
         return auth_response
 
     return await handler(request)
 
 
+# --- POST dispatch ---
+
 async def _handle_post(request: web.Request) -> web.Response:
+    log = request.get("log")
+
     try:
         raw = await request.text()
         body = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        if log:
+            log.error("request.parse_error", {"error": str(exc)})
         return error_response("Invalid JSON body", "invalid_request", "PARSE_ERROR", 400)
 
     if not isinstance(body, dict):
+        if log:
+            log.error("request.parse_error", {"detail": "body is not a dict"})
         return error_response("Invalid JSON body", "invalid_request", "PARSE_ERROR", 400)
 
     path = request.match_info.get("path", "")
     route = _detect_route(path, body)
+
+    if log:
+        log.info("route.detect", {"route": route, "path": path})
 
     if route == "chat":
         return await handle_chat_completions(body, request)
@@ -155,8 +235,12 @@ async def _handle_post(request: web.Request) -> web.Response:
     elif route == "anthropic":
         return await handle_anthropic_messages(body, request)
 
+    if log:
+        log.warn("route.unknown", {"path": path})
     return error_response("Unknown route", "invalid_request", "INVALID_ROUTE", 400)
 
+
+# --- Client session lifecycle ---
 
 async def _client_session_ctx(app: web.Application):
     import aiohttp
@@ -167,7 +251,13 @@ async def _client_session_ctx(app: web.Application):
 
 
 def create_app() -> web.Application:
-    app = web.Application(middlewares=[cors_middleware, rate_limit_middleware, auth_middleware])
+    logging_middleware_first = logging_middleware  # outermost — wraps everything
+    app = web.Application(middlewares=[
+        logging_middleware_first,
+        cors_middleware,
+        rate_limit_middleware,
+        auth_middleware,
+    ])
 
     app["upstream_base_url"] = os.environ.get("UPSTREAM_BASE_URL", "https://opencode.ai/zen/go/v1")
     app["api_key"] = os.environ.get("API_KEY", "")
@@ -182,6 +272,8 @@ def create_app() -> web.Application:
 
     app.router.add_get("/v1/models", _handle_list_models)
     app.router.add_get("/models", _handle_list_models)
+    app.router.add_get("/health", _handle_health)
+    app.router.add_get("/readyz", _handle_health)
     app.router.add_post("/{path:.*}", _handle_post)
 
     return app

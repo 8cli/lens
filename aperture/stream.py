@@ -36,7 +36,10 @@ async def stream_sse(response: ClientResponse) -> AsyncIterator[dict]:
     async for chunk in response.content:
         total += len(chunk)
         if total > MAX_SSE_BUFFER:
-            raise RuntimeError("SSE buffer exceeded 2MB limit")
+            raise RuntimeError(
+                f"SSE buffer exceeded {MAX_SSE_BUFFER // 1024 // 1024}MB limit "
+                f"({total} bytes consumed)"
+            )
 
         buf += chunk
         lines = buf.split(b"\n")
@@ -87,6 +90,8 @@ async def pipe_sse(
     )
     await resp.prepare(request)
 
+    log = request.get("log")
+
     try:
         async for chunk in generator:
             event = chunk.get("event", "")
@@ -94,6 +99,8 @@ async def pipe_sse(
             sse_text = f"event: {event}\ndata: {json.dumps(data)}\n\n"
             await resp.write(sse_text.encode("utf-8"))
     except Exception as exc:
+        if log:
+            log.warn("sse.pipe_error", {"error": str(exc), "type": type(exc).__name__})
         try:
             error_data = json.dumps({"error": str(exc) or "Internal error"})
             await resp.write(f"event: error\ndata: {error_data}\n\n".encode("utf-8"))
@@ -124,10 +131,14 @@ async def pipe_sse_raw(
     )
     await resp.prepare(request)
 
+    log = request.get("log")
+
     try:
         async for chunk in generator:
             await resp.write((chunk + "\n").encode("utf-8"))
     except Exception as exc:
+        if log:
+            log.warn("sse.pipe_error", {"error": str(exc), "type": type(exc).__name__})
         try:
             error_data = json.dumps({"error": str(exc) or "Internal error"})
             await resp.write(f"event: error\ndata: {error_data}\n\n".encode("utf-8"))

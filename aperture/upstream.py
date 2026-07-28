@@ -4,10 +4,12 @@ Manages connection to upstream Chat Completions API via app's shared session.
 No Gateway fallback (Cloudflare-specific logic removed).
 """
 
+import asyncio
 import os
-from aiohttp import web, ClientResponse
+from aiohttp import web, ClientResponse, ClientError, ClientConnectionError
 
 from .helpers import cors_headers
+from .middleware.logger import Logger
 
 
 def build_upstream_url(app: web.Application) -> str:
@@ -30,28 +32,125 @@ def build_auth_headers(app: web.Application) -> dict:
 async def send_chat_request(
     app: web.Application,
     chat_body: dict,
+    log: Logger | None = None,
 ) -> ClientResponse | web.Response:
     """Send a Chat Completions request to the upstream API.
 
     Uses the app's shared aiohttp ClientSession.
-    On network error, returns a 502 web.Response.
+    On network error, returns a 502 web.Response with a structured error body.
+
+    Categorizes upstream errors:
+    - Timeout → 504
+    - Connection refused/DNS failure → 502 with UPSTREAM_UNREACHABLE
+    - Other client errors → 502 with UPSTREAM_ERROR
+    - Unexpected → 502 with INTERNAL_ERROR
     """
     url = build_upstream_url(app)
     headers = build_auth_headers(app)
     client = app.get("client")
+    model = chat_body.get("model", "")
+
+    if log:
+        log.info("upstream.request", {
+            "url": url,
+            "model": model,
+        })
 
     if client is None:
+        msg = "Upstream client not initialized"
+        if log:
+            log.error("upstream.no_client", {"url": url})
         return web.json_response(
-            {"error": "Upstream client not initialized"},
+            {"error": {"message": msg, "type": "upstream_error", "code": "NO_CLIENT"}},
             status=502,
             headers=cors_headers(),
         )
 
+    timeout_ms = app.get("request_timeout", 120000)
+
     try:
-        return await client.post(url, json=chat_body, headers=headers)
-    except Exception:
+        resp = await client.post(url, json=chat_body, headers=headers)
+        if log:
+            log.info("upstream.response", {
+                "url": url,
+                "status": resp.status,
+                "model": model,
+            })
+        return resp
+
+    except asyncio.TimeoutError:
+        if log:
+            log.error("upstream.timeout", {
+                "url": url,
+                "timeout_ms": timeout_ms,
+                "model": model,
+            })
         return web.json_response(
-            {"error": {"message": "Upstream network error", "type": "network_error", "code": "NETWORK_ERROR"}},
+            {
+                "error": {
+                    "message": f"Upstream request timed out after {timeout_ms}ms",
+                    "type": "timeout_error",
+                    "code": "UPSTREAM_TIMEOUT",
+                },
+            },
+            status=504,
+            headers=cors_headers(),
+        )
+
+    except ClientConnectionError as exc:
+        if log:
+            log.error("upstream.unreachable", {
+                "url": url,
+                "error": str(exc),
+                "model": model,
+            })
+        return web.json_response(
+            {
+                "error": {
+                    "message": f"Upstream unreachable: {exc}",
+                    "type": "connection_error",
+                    "code": "UPSTREAM_UNREACHABLE",
+                },
+            },
+            status=502,
+            headers=cors_headers(),
+        )
+
+    except ClientError as exc:
+        if log:
+            log.error("upstream.client_error", {
+                "url": url,
+                "error": str(exc),
+                "model": model,
+            })
+        return web.json_response(
+            {
+                "error": {
+                    "message": f"Upstream error: {exc}",
+                    "type": "upstream_error",
+                    "code": "UPSTREAM_CLIENT_ERROR",
+                },
+            },
+            status=502,
+            headers=cors_headers(),
+        )
+
+    except Exception as exc:
+        if log:
+            log.error("upstream.unexpected", {
+                "url": url,
+                "error": str(exc),
+                "type": type(exc).__name__,
+                "model": model,
+            })
+        return web.json_response(
+            {
+                "error": {
+                    "message": "Internal upstream error",
+                    "type": "internal_error",
+                    "code": "INTERNAL_ERROR",
+                },
+            },
             status=502,
             headers=cors_headers(),
         )

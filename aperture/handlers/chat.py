@@ -9,7 +9,6 @@ from ..upstream import send_chat_request
 from ..stream import pipe_sse_raw
 from ..translators.dsml import normalize_dsml_tool_calls
 from ..helpers import error_response, cors_headers
-from ..middleware.logger import create_logger
 
 
 async def filter_chat_stream(response) -> AsyncIterator[str]:
@@ -86,20 +85,28 @@ async def filter_chat_stream(response) -> AsyncIterator[str]:
 async def handle_chat_completions(body: dict, request: web.Request) -> web.Response | web.StreamResponse:
     """Handle a Chat Completions request: override model, send upstream, filter/normalize."""
     app = request.app
+    log = request.get("log")
+
+    original_model = body.get("model", "")
     body["model"] = map_model_name(body.get("model"), app)
+    if log:
+        log.info("model.mapped", {"from": original_model, "to": body["model"]})
 
-    log = create_logger("chat")
-
-    upstream_response = await send_chat_request(app, body)
+    upstream_response = await send_chat_request(app, body, log)
 
     if isinstance(upstream_response, web.Response):
         return upstream_response
 
     if not upstream_response.ok:
-        log.error("upstream.failed", {"status": upstream_response.status})
+        if log:
+            log.error("upstream.bad_status", {
+                "status": upstream_response.status,
+                "model": body["model"],
+            })
         return error_response("Upstream request failed", "upstream_error", "UPSTREAM", upstream_response.status)
 
     if body.get("stream"):
+        log and log.info("response.streaming", {"format": "sse"})
         return await pipe_sse_raw(filter_chat_stream(upstream_response), request)
 
     try:
@@ -110,10 +117,13 @@ async def handle_chat_completions(body: dict, request: web.Request) -> web.Respo
             if "reasoning_content" in msg:
                 del msg["reasoning_content"]
         normalized = normalize_dsml_tool_calls(response_body)
+        log and log.info("response.ok", {"tokens": response_body.get("usage")})
         return web.json_response(normalized, headers=cors_headers())
-    except (json.JSONDecodeError, Exception):
-        return web.json_response(
-            {"error": "Failed to parse upstream response"},
-            status=502,
-            headers=cors_headers(),
-        )
+    except json.JSONDecodeError as exc:
+        if log:
+            log.error("response.parse_error", {"error": str(exc), "body_preview": response_text[:500]})
+        return error_response("Upstream returned invalid JSON", "upstream_error", "UPSTREAM_PARSE_ERROR", 502)
+    except Exception as exc:
+        if log:
+            log.error("response.unexpected", {"error": str(exc), "type": type(exc).__name__})
+        return error_response("Failed to process upstream response", "internal_error", "INTERNAL_ERROR", 502)

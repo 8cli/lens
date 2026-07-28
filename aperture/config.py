@@ -51,35 +51,17 @@ def get_env_json(key: str, default=None) -> dict:
 
 
 def map_model_name(model: str, env: dict) -> str:
-    """Map a model name to a known model or fall back to DEFAULT_MODEL.
+    """Always return DEFAULT_MODEL — every incoming model is fixed to the user's configured default.
+
+    Regardless of what model name the client sends, it is replaced with the
+    value of the DEFAULT_MODEL environment variable. This ensures all upstream
+    requests use a single, user-specified model.
 
     * None -> default model
-    * Already known -> returned as-is
-    * MODEL_MAP alias -> resolved to mapped target
+    * Known model name (even if in _KNOWN_MODELS) -> default model
+    * MODEL_MAP alias -> default model
     * Unknown -> default model
     """
-    if model is None:
-        return resolve_default_model(env)
-
-    model_str = str(model)
-    if model_str in _KNOWN_MODELS:
-        return model_str
-
-    # Check MODEL_MAP alias
-    model_map_raw = env.get("MODEL_MAP", {})
-    if isinstance(model_map_raw, str):
-        try:
-            model_map = json.loads(model_map_raw)
-        except (json.JSONDecodeError, TypeError):
-            model_map = {}
-    elif isinstance(model_map_raw, dict):
-        model_map = model_map_raw
-    else:
-        model_map = {}
-
-    if model_str in model_map:
-        return model_map[model_str]
-
     return resolve_default_model(env)
 
 

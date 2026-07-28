@@ -1,5 +1,6 @@
 """Integration tests for handlers using aiohttp TestClient."""
 
+import json
 import pytest
 from aperture.index import create_app
 
@@ -26,6 +27,28 @@ async def test_models_endpoint(client):
     assert "data" in data
     assert isinstance(data["data"], list)
     assert len(data["data"]) > 0
+    # Verify default model is listed
+    default = data["data"][0]
+    assert default["object"] == "model"
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint(client):
+    """Health check returns ok status."""
+    resp = await client.get("/health")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["status"] == "ok"
+    assert "version" in data
+
+
+@pytest.mark.asyncio
+async def test_readyz_endpoint(client):
+    """Readyz returns same as health."""
+    resp = await client.get("/readyz")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["status"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -56,3 +79,21 @@ async def test_anthropic_route_detection(client):
         headers={"Authorization": "Bearer sk-test"},
     )
     assert resp.status in (200, 502)
+
+
+@pytest.mark.asyncio
+async def test_request_id_in_logging(client, capsys):
+    """Verify logging middleware runs and outputs structured logs."""
+    resp = await client.get("/v1/models")
+    assert resp.status == 200
+    captured = capsys.readouterr()
+    # Should have request.start and request.end log lines
+    assert "request.start" in captured.out
+    assert "request.end" in captured.out
+    # Should contain a request_id
+    lines = captured.out.strip().split("\n")
+    parsed = [json.loads(l) for l in lines]
+    request_ids = set(l["requestId"] for l in parsed if "requestId" in l)
+    assert len(request_ids) >= 1
+    for rid in request_ids:
+        assert rid.startswith("req_")

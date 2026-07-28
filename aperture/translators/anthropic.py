@@ -10,7 +10,7 @@ from aiohttp import ClientResponse
 
 from ..helpers import uid, now, extract_text
 from ..stream import stream_sse
-from ..config import resolve_default_model
+from ..config import map_model_name
 
 
 def translate_anthropic_to_chat(body: dict, env: dict | None = None) -> dict:
@@ -423,16 +423,12 @@ async def translate_anthropic_json(
 # --- Internal helpers ---
 
 def _translate_model(model: str, env: dict | None = None) -> str:
-    if not model:
-        return resolve_default_model(env)
-    known = {
-        "claude-sonnet-4-20250514": resolve_default_model(env),
-        "claude-sonnet-4": resolve_default_model(env),
-        "claude-3-5-sonnet-latest": resolve_default_model(env),
-        "claude-3-haiku": resolve_default_model(env),
-        "claude-3-opus": resolve_default_model(env),
-    }
-    return known.get(model, resolve_default_model(env))
+    """Map Anthropic request model to the configured DEFAULT_MODEL.
+
+    Delegates to config.map_model_name() for consistent model resolution
+    across all protocols (chat, responses, anthropic).
+    """
+    return map_model_name(model, env or {})
 
 
 def _map_finish_reason(fr: str | None) -> str:

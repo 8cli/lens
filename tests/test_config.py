@@ -23,12 +23,13 @@ class TestMapModelName:
         assert result == "claude-opus-4"
 
     def test_map_model_alias_from_env(self):
+        # map_model_name always returns DEFAULT_MODEL regardless of alias
         env = {
             "MODEL_MAP": '{"my-alias": "claude-haiku-4-20250514"}',
             "DEFAULT_MODEL": "deepseek-v4-flash",
         }
         result = map_model_name("my-alias", env)
-        assert result == "claude-haiku-4-20250514"
+        assert result == "deepseek-v4-flash"
 
 
 class TestResolveDefaultModel:
