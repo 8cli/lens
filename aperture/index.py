@@ -229,9 +229,9 @@ async def _client_session_ctx(app: web.Application):
 
 
 def create_app() -> web.Application:
-    # Increase client_max_size to 50MB for large context (Claude Code project files)
+    # No request body size limit (Claude Code sends large project context)
     logging_middleware_first = logging_middleware  # outermost — wraps everything
-    app = web.Application(client_max_size=50 * 1024 * 1024, middlewares=[
+    app = web.Application(client_max_size=0, middlewares=[
         logging_middleware_first,
         cors_middleware,
         rate_limit_middleware,
