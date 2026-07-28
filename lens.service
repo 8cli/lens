@@ -14,6 +14,7 @@ Environment=API_KEY=sk-VriyOzWq63bNVBkiaFgBMGcsAGgjHQIac7nkDYIih14dq2JWTv1rI7UYn
 Environment=UPSTREAM_BASE_URL=https://opencode.ai/zen/go/v1
 Environment=APERTURE_HOST=0.0.0.0
 Environment=APERTURE_PORT=8080
+Environment=LOG_DIR=/home/yupeng/lens/logs
 
 [Install]
 WantedBy=multi-user.target

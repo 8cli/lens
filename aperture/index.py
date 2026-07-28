@@ -13,7 +13,7 @@ from aiohttp import web
 from .helpers import uid, error_response, cors_headers
 from .middleware.auth import authenticate
 from .middleware.rate_limiter import create_rate_limiter
-from .middleware.logger import Logger
+from .middleware.logger import Logger, configure_log_file
 from .handlers.chat import handle_chat_completions
 from .handlers.responses import handle_responses_api
 from .handlers.anthropic import handle_anthropic_messages
@@ -241,6 +241,14 @@ def create_app() -> web.Application:
     app["request_timeout"] = int(os.environ.get("REQUEST_TIMEOUT_MS", "120000"))
 
     app.cleanup_ctx.append(_client_session_ctx)
+
+    # Configure file logging
+    log_dir = os.environ.get("LOG_DIR", "/var/log/lens")
+    try:
+        log_path = configure_log_file(log_dir)
+        print(f"Logging to {log_path}", flush=True)
+    except Exception as exc:
+        print(f"Warning: could not set up file logging at {log_dir}: {exc}", file=sys.stderr, flush=True)
 
     app.router.add_get("/v1/models", _handle_list_models)
     app.router.add_get("/models", _handle_list_models)

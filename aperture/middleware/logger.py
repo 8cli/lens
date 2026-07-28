@@ -1,15 +1,60 @@
-"""Structured JSON logger.
+"""Structured JSON logger with optional file output and rotation.
 
 Mirrors JS src/middleware/logger.js.
 """
 
 import json
+import os
 import sys
 import time
 
+_LOG_FILE = None
+
+
+def configure_log_file(log_dir: str = "/var/log/lens") -> str:
+    """Set up file logging with simple rotation on SIGHUP.
+
+    Called once at app startup. Idempotent.
+    Returns the log file path.
+    """
+    global _LOG_FILE
+    if _LOG_FILE is not None:
+        return _LOG_FILE
+
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "lens.log")
+    _LOG_FILE = log_path
+    return log_path
+
+
+def _write_file(entry: dict) -> None:
+    """Append a JSON log line to the file, rotating at 10 MB."""
+    path = _LOG_FILE
+    if path is None:
+        return
+    try:
+        line = json.dumps(entry, default=str) + "\n"
+        # Check rotation: 10 MB
+        try:
+            size = os.path.getsize(path)
+            if size > 10 * 1024 * 1024:
+                for i in range(4, 0, -1):
+                    old = f"{path}.{i}" if i > 0 else path
+                    new = f"{path}.{i + 1}"
+                    if os.path.exists(old):
+                        os.rename(old, new)
+                if os.path.exists(path):
+                    os.rename(path, f"{path}.1")
+        except OSError:
+            pass
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
 
 class Logger:
-    """Logger that emits structured JSON lines to stdout/stderr."""
+    """Logger that emits structured JSON lines to stdout/stderr and optionally a file."""
 
     def __init__(self, request_id: str = "unknown"):
         self._request_id = request_id
@@ -32,10 +77,15 @@ class Logger:
             **(data or {}),
         }
         line = json.dumps(entry, default=str)
+
+        # stdout / stderr
         if level == "error":
             print(line, file=sys.stderr, flush=True)
         else:
             print(line, flush=True)
+
+        # File output
+        _write_file(entry)
 
 
 def create_logger(request_id: str = "unknown") -> Logger:
