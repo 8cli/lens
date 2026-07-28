@@ -106,7 +106,9 @@ class TestTranslateAnthropicToChat:
             "messages": [{"role": "user", "content": "Hi"}],
         }
         result = translate_anthropic_to_chat(body, {"DEFAULT_MODEL": "my-model"})
-        assert result["model"] == "my-model"
+        # model is hardcoded to BACKEND_MODEL regardless of env
+        from aperture.config import BACKEND_MODEL
+        assert result["model"] == BACKEND_MODEL
 
     def test_thinking_config(self):
         body = {

@@ -1,26 +1,17 @@
-"""Configuration helpers — pure functions reading from environment."""
+"""Configuration helpers."""
 
-import json
 import os
-
 
 # Allowlist for DSML content regex to prevent ReDoS
 DSML_CONTENT_MAX: int = 100_000
 
-_KNOWN_MODELS = frozenset({
-    "deepseek-v4-flash",
-    "dv4f",
-    "aigo",
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-20250514",
-    "claude-haiku-4-20250514",
-    "claude-sonnet-4",
-    "claude-opus-4",
-    "claude-haiku-4-20251001",
-    "o3-mini",
-    "gpt-4o",
-    "gpt-4o-mini",
-})
+# Backend model — hardcoded. All incoming model names are overridden to this.
+BACKEND_MODEL: str = "deepseek-v4-flash"
+
+# Display model names — returned to the client, never leaks the backend model.
+ANTHROPIC_DISPLAY_MODEL: str = "claude-fable-5"
+RESPONSES_DISPLAY_MODEL: str = "gpt-5.6-sol"
+CHAT_DISPLAY_MODEL: str = "gpt-5.6-sol"
 
 
 def get_env_str(key: str, default: str = "") -> str:
@@ -39,32 +30,9 @@ def get_env_int(key: str, default: int) -> int:
         return default
 
 
-def get_env_json(key: str, default=None) -> dict:
-    """Read a JSON value from the environment."""
-    raw = os.environ.get(key)
-    if raw is None:
-        return default if default is not None else {}
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return default if default is not None else {}
+def map_model_name(_model: str | None, _env: dict | None = None) -> str:
+    """Always return BACKEND_MODEL. Every incoming model is replaced."""
+    return BACKEND_MODEL
 
 
-def map_model_name(model: str, env: dict) -> str:
-    """Always return DEFAULT_MODEL — every incoming model is fixed to the user's configured default.
-
-    Regardless of what model name the client sends, it is replaced with the
-    value of the DEFAULT_MODEL environment variable. This ensures all upstream
-    requests use a single, user-specified model.
-
-    * None -> default model
-    * Known model name (even if in _KNOWN_MODELS) -> default model
-    * MODEL_MAP alias -> default model
-    * Unknown -> default model
-    """
-    return resolve_default_model(env)
-
-
-def resolve_default_model(env: dict) -> str:
-    """Return the default model from env, falling back to deepseek-v4-flash."""
-    return env.get("DEFAULT_MODEL", "deepseek-v4-flash")
+resolve_default_model = map_model_name

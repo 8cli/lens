@@ -2,7 +2,7 @@
 
 from aiohttp import web
 
-from ..config import map_model_name
+from ..config import map_model_name, ANTHROPIC_DISPLAY_MODEL
 from ..upstream import send_chat_request
 from ..stream import pipe_sse
 from ..translators.anthropic import (
@@ -19,11 +19,13 @@ async def handle_anthropic_messages(body: dict, request: web.Request) -> web.Res
     log = request.get("log")
     request_id = uid("msg_")
 
+    display_model = ANTHROPIC_DISPLAY_MODEL
+
     chat_req = translate_anthropic_to_chat(body, dict(app))
     original_model = chat_req.get("model", "")
     chat_req["model"] = map_model_name(chat_req.get("model"), app)
     if log:
-        log.info("model.mapped", {"from": original_model, "to": chat_req["model"]})
+        log.info("model.mapped", {"from": original_model, "to": f"{chat_req['model']} (display: {display_model})"})
 
     upstream_response = await send_chat_request(app, chat_req, log)
 
@@ -53,12 +55,12 @@ async def handle_anthropic_messages(body: dict, request: web.Request) -> web.Res
     if chat_req.get("stream"):
         log and log.info("response.streaming", {"format": "sse"})
         return await pipe_sse(
-            translate_anthropic_stream(upstream_response, request_id, chat_req.get("model", "")),
+            translate_anthropic_stream(upstream_response, request_id, display_model),
             request,
         )
 
     log and log.info("response.ok", {"format": "json"})
-    result = await translate_anthropic_json(upstream_response, request_id, chat_req.get("model", ""))
+    result = await translate_anthropic_json(upstream_response, request_id, display_model)
     return web.json_response(
         result,
         headers={

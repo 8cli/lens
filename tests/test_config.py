@@ -4,38 +4,24 @@ import os
 
 from aperture.config import (
     get_env_int,
-    get_env_json,
     get_env_str,
     map_model_name,
-    resolve_default_model,
+    BACKEND_MODEL,
 )
 
 
 class TestMapModelName:
-    def test_map_model_none_returns_default(self):
-        env = {"DEFAULT_MODEL": "claude-sonnet-4"}
-        result = map_model_name(None, env)
-        assert result == "claude-sonnet-4"
+    def test_map_model_none_returns_backend(self):
+        assert map_model_name(None) == BACKEND_MODEL
 
-    def test_map_model_unknown_resolves_default(self):
-        env = {"DEFAULT_MODEL": "claude-opus-4"}
-        result = map_model_name("completely-unknown-model", env)
-        assert result == "claude-opus-4"
+    def test_map_model_unknown_resolves_backend(self):
+        assert map_model_name("completely-unknown-model") == BACKEND_MODEL
 
-    def test_map_model_alias_from_env(self):
-        # map_model_name always returns DEFAULT_MODEL regardless of alias
-        env = {
-            "MODEL_MAP": '{"my-alias": "claude-haiku-4-20250514"}',
-            "DEFAULT_MODEL": "deepseek-v4-flash",
-        }
-        result = map_model_name("my-alias", env)
-        assert result == "deepseek-v4-flash"
-
-
-class TestResolveDefaultModel:
-    def test_resolve_default_model_fallback(self):
-        result = resolve_default_model({})
-        assert result == "deepseek-v4-flash"
+    def test_map_model_always_backend(self):
+        assert map_model_name("claude-sonnet-4-20250514") == BACKEND_MODEL
+        assert map_model_name("gpt-4o") == BACKEND_MODEL
+        assert map_model_name("o3-mini") == BACKEND_MODEL
+        assert map_model_name("") == BACKEND_MODEL
 
 
 class TestGetEnvInt:

@@ -2,7 +2,7 @@
 
 from aiohttp import web
 
-from ..config import map_model_name
+from ..config import map_model_name, RESPONSES_DISPLAY_MODEL
 from ..upstream import send_chat_request
 from ..stream import pipe_sse
 from ..translators.responses import translate_to_chat, translate_stream_events, translate_response_json
@@ -37,7 +37,7 @@ async def handle_responses_api(body: dict, request: web.Request) -> web.Response
                 "id": resp_id,
                 "object": "response",
                 "created_at": now(),
-                "model": chat_req.get("model", ""),
+                "model": RESPONSES_DISPLAY_MODEL,
                 "output": [],
                 "error": {
                     "message": "Upstream request failed",
@@ -52,10 +52,10 @@ async def handle_responses_api(body: dict, request: web.Request) -> web.Response
     if chat_req.get("stream"):
         log and log.info("response.streaming", {"format": "sse"})
         return await pipe_sse(
-            translate_stream_events(upstream_response, resp_id, chat_req.get("model", "")),
+            translate_stream_events(upstream_response, resp_id, RESPONSES_DISPLAY_MODEL),
             request,
         )
 
     log and log.info("response.ok", {"format": "json"})
-    result = await translate_response_json(upstream_response, resp_id, chat_req.get("model", ""))
+    result = await translate_response_json(upstream_response, resp_id, RESPONSES_DISPLAY_MODEL)
     return web.json_response(result, headers=cors_headers())

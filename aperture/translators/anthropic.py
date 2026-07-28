@@ -252,7 +252,7 @@ async def translate_anthropic_stream(
     stream_usage = {"input_tokens": 0, "output_tokens": 0}
 
     async for chunk in stream_sse(response):
-        if "usage" in chunk:
+        if "usage" in chunk and isinstance(chunk.get("usage"), dict):
             stream_usage["input_tokens"] = (
                 chunk["usage"].get("prompt_tokens", chunk["usage"].get("input_tokens", 0))
             )
@@ -260,9 +260,15 @@ async def translate_anthropic_stream(
                 chunk["usage"].get("completion_tokens", chunk["usage"].get("output_tokens", 0))
             )
 
-        for choice in chunk.get("choices", []):
+        for choice in (chunk.get("choices") or []):
+            if not isinstance(choice, dict):
+                continue
             delta = choice.get("delta", {}) or {}
-            content = delta.get("content", "")
+            if not isinstance(delta, dict):
+                delta = {}
+            # Strip upstream-specific fields that deepseek sends
+            delta.pop("reasoning_content", None)
+            content = delta.get("content", "") or ""
             tool_calls = delta.get("tool_calls")
             finish_reason = choice.get("finish_reason")
             if finish_reason:

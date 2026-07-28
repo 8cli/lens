@@ -37,42 +37,14 @@ def _detect_route(path: str, body: dict) -> str:
 
 
 def _handle_list_models(request: web.Request) -> web.Response:
-    """Build and return the model list from environment."""
-    models = []
-    seen = set()
-
-    def add_model(model_id: str):
-        if model_id in seen:
-            return
-        seen.add(model_id)
-        models.append({
-            "id": model_id,
-            "object": "model",
-            "created": 1780000000,
-            "owned_by": "aperture",
-        })
-
-    default = os.environ.get("DEFAULT_MODEL", "deepseek-v4-flash")
-    add_model(default)
-
-    model_map_raw = os.environ.get("MODEL_MAP", "{}")
-    try:
-        model_map = json.loads(model_map_raw)
-        if isinstance(model_map, dict):
-            for alias, target in model_map.items():
-                add_model(alias)
-                add_model(target)
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    common = [
-        "claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-4-20250514",
-        "claude-sonnet-4", "claude-opus-4", "claude-haiku-4-20251001",
-        "o3-mini", "gpt-4o", "gpt-4o-mini",
-    ]
-    for mid in common:
-        add_model(mid)
-
+    """Build and return the model list. Only shows the single hardcoded backend model."""
+    backend_model = "deepseek-v4-flash"
+    models = [{
+        "id": backend_model,
+        "object": "model",
+        "created": 1780000000,
+        "owned_by": "lens",
+    }]
     return web.json_response({"data": models}, headers=cors_headers())
 
 

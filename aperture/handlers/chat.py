@@ -4,7 +4,7 @@ import json
 from typing import AsyncIterator
 from aiohttp import web
 
-from ..config import map_model_name
+from ..config import map_model_name, CHAT_DISPLAY_MODEL
 from ..upstream import send_chat_request
 from ..stream import pipe_sse_raw
 from ..translators.dsml import normalize_dsml_tool_calls
@@ -46,6 +46,9 @@ async def filter_chat_stream(response) -> AsyncIterator[str]:
             if "choices" not in parsed or not isinstance(parsed.get("choices"), list):
                 yield line.decode("utf-8", errors="replace")
                 continue
+
+            # Override model to display name (never leak backend model)
+            parsed["model"] = CHAT_DISPLAY_MODEL
 
             modified = False
             had_null_content = False
@@ -116,6 +119,7 @@ async def handle_chat_completions(body: dict, request: web.Request) -> web.Respo
             msg = choice.get("message", {})
             if "reasoning_content" in msg:
                 del msg["reasoning_content"]
+        response_body["model"] = CHAT_DISPLAY_MODEL
         normalized = normalize_dsml_tool_calls(response_body)
         log and log.info("response.ok", {"tokens": response_body.get("usage")})
         return web.json_response(normalized, headers=cors_headers())

@@ -101,19 +101,23 @@ def translate_to_chat(body: dict) -> dict:
         chat["stop"] = body["stop"]
 
     # Map tools
+    # Both Responses API and Chat Completions use:
+    #   {"type":"function", "function":{"name":"...", "description":"...", "parameters":{...}}}
+    # Also handle legacy flat format: {"name":"...", "description":"...", "parameters":{...}}
     if "tools" in body and body["tools"]:
         tools = []
         for t in body["tools"]:
             if not isinstance(t, dict):
                 continue
             ttype = t.get("type", "")
-            if ttype == "function" or (t.get("name") and not ttype):
+            if ttype == "function" or (t.get("name") and not ttype) or not ttype:
+                fn = t.get("function", t)
                 tools.append({
                     "type": "function",
                     "function": {
-                        "name": t.get("name", ""),
-                        "description": t.get("description", ""),
-                        "parameters": t.get("parameters", t.get("input_schema", {})),
+                        "name": fn.get("name", ""),
+                        "description": fn.get("description", ""),
+                        "parameters": fn.get("parameters", fn.get("input_schema", {})),
                     },
                 })
         if tools:
