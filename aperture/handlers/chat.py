@@ -51,7 +51,6 @@ async def filter_chat_stream(response) -> AsyncIterator[str]:
             parsed["model"] = CHAT_DISPLAY_MODEL
 
             modified = False
-            had_null_content = False
             for choice in parsed["choices"]:
                 delta = choice.get("delta")
                 if not delta:
@@ -61,20 +60,17 @@ async def filter_chat_stream(response) -> AsyncIterator[str]:
                     modified = True
                 if delta.get("content") is None:
                     delta["content"] = ""
-                    modified = True
-                    had_null_content = True
 
             if not modified:
                 yield line.decode("utf-8", errors="replace")
                 continue
 
-            has_content = had_null_content or any(
+            has_content = any(
                 c.get("finish_reason")
                 or (
                     c.get("delta")
                     and (
                         (isinstance(c["delta"].get("content"), str) and len(c["delta"]["content"]) > 0)
-                        or c["delta"].get("role") is not None
                         or c["delta"].get("tool_calls") is not None
                     )
                 )

@@ -244,6 +244,7 @@ def create_app() -> web.Application:
     app["backup_upstream_base_url"] = os.environ.get("BACKUP_UPSTREAM_BASE_URL", "")
     app["backup_api_key"] = os.environ.get("BACKUP_API_KEY", "")
     app["backup_enabled"] = os.environ.get("BACKUP_ENABLED", "true") == "true"
+    app["backup_backend_model"] = os.environ.get("BACKUP_BACKEND_MODEL", "")
 
     window_ms = int(os.environ.get("RATE_LIMIT_WINDOW_MS", "60000"))
     max_req = int(os.environ.get("RATE_LIMIT_MAX", "120"))
@@ -257,6 +258,12 @@ def create_app() -> web.Application:
     if upstream_rpm > 0:
         app["_upstream_limiter"] = UpstreamRateLimiter(upstream_rpm)
         print(f"Upstream rate limiter: {upstream_rpm} RPM", flush=True)
+
+    upstream_concurrency = int(os.environ.get("UPSTREAM_CONCURRENCY", "8"))
+    if upstream_concurrency > 0:
+        import asyncio
+        app["_upstream_semaphore"] = asyncio.Semaphore(upstream_concurrency)
+        print(f"Upstream concurrency limiter: {upstream_concurrency}", flush=True)
 
     app.cleanup_ctx.append(_client_session_ctx)
 

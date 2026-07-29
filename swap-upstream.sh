@@ -10,8 +10,10 @@ trap 'rm -f "$TEMP_FILE"' EXIT
 # Read current environment variables
 upstream=$(grep -oP '^Environment=UPSTREAM_BASE_URL=\K.*' "$SERVICE_FILE")
 api_key=$(grep -oP '^Environment=API_KEY=\K.*' "$SERVICE_FILE")
+model=$(grep -oP '^Environment=BACKEND_MODEL=\K.*' "$SERVICE_FILE" || true)
 backup_url=$(grep -oP '^Environment=BACKUP_UPSTREAM_BASE_URL=\K.*' "$SERVICE_FILE" || true)
 backup_key=$(grep -oP '^Environment=BACKUP_API_KEY=\K.*' "$SERVICE_FILE" || true)
+backup_model=$(grep -oP '^Environment=BACKUP_BACKEND_MODEL=\K.*' "$SERVICE_FILE" || true)
 
 if [ -z "$backup_url" ]; then
     echo "ERROR: No backup upstream configured — nothing to swap with." >&2
@@ -29,6 +31,8 @@ sed \
     -e "s|^Environment=BACKUP_UPSTREAM_BASE_URL=.*|Environment=BACKUP_UPSTREAM_BASE_URL=$upstream|" \
     -e "s|^Environment=API_KEY=.*|Environment=API_KEY=$backup_key|" \
     -e "s|^Environment=BACKUP_API_KEY=.*|Environment=BACKUP_API_KEY=$api_key|" \
+    -e "s|^Environment=BACKEND_MODEL=.*|Environment=BACKEND_MODEL=$backup_model|" \
+    -e "s|^Environment=BACKUP_BACKEND_MODEL=.*|Environment=BACKUP_BACKEND_MODEL=$model|" \
     "$SERVICE_FILE" > "$TEMP_FILE"
 
 # Validate the result: ensure both UPSTREAM_BASE_URL and API_KEY are still present

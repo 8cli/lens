@@ -5,8 +5,11 @@ import os
 # Allowlist for DSML content regex to prevent ReDoS
 DSML_CONTENT_MAX: int = 100_000
 
-# Backend model — hardcoded. All incoming model names are overridden to this.
-BACKEND_MODEL: str = "deepseek-v4-flash"
+# Backend model — all incoming model names are overridden to this.
+BACKEND_MODEL: str = os.environ.get("BACKEND_MODEL", "deepseek-v4-flash")
+
+# Backup backend model — used when falling back to backup upstream.
+BACKUP_BACKEND_MODEL: str = os.environ.get("BACKUP_BACKEND_MODEL", BACKEND_MODEL)
 
 # Display model names — returned to the client, never leaks the backend model.
 ANTHROPIC_DISPLAY_MODEL: str = "claude-fable-5"

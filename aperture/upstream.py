@@ -72,10 +72,17 @@ async def send_chat_request(
 
     timeout_ms = app.get("request_timeout", 120000)
 
-    # Rate limit — wait for a token (queues if needed, never returns 429)
+    # Rate limit — only for NVIDIA API (integrate.api.nvidia.com has 40 RPM limit)
+    # Other upstreams (sensenova, opencode, etc.) are not rate-limited here.
+    is_nvidia = "integrate.api.nvidia.com" in url
     limiter: UpstreamRateLimiter | None = app.get("_upstream_limiter")
-    if limiter:
+    if limiter and is_nvidia:
         await limiter.acquire()
+
+    # Concurrency limit — prevent exceeding NVIDIA's worker pool (48 max concurrent)
+    semaphore: asyncio.Semaphore | None = app.get("_upstream_semaphore")
+    if semaphore and is_nvidia:
+        await semaphore.acquire()
 
     try:
         resp = await client.post(url, json=chat_body, headers=headers)
@@ -164,6 +171,10 @@ async def send_chat_request(
             headers=cors_headers(),
         )
 
+    finally:
+        if semaphore and is_nvidia:
+            semaphore.release()
+
 
 async def send_with_fallback(
     app: web.Application,
@@ -198,7 +209,8 @@ async def send_with_fallback(
         })
         backup_url = _build_backup_url(app)
         backup_headers = _build_backup_headers(app)
-        return await send_chat_request(app, chat_body, log, url_override=backup_url, headers_override=backup_headers)
+        backup_body = _backup_chat_body(chat_body, app)
+        return await send_chat_request(app, backup_body, log, url_override=backup_url, headers_override=backup_headers)
 
     # Step 1: Try primary
     resp = await send_chat_request(app, chat_body, log)
@@ -226,7 +238,8 @@ async def send_with_fallback(
         })
         backup_url = _build_backup_url(app)
         backup_headers = _build_backup_headers(app)
-        resp = await send_chat_request(app, chat_body, log, url_override=backup_url, headers_override=backup_headers)
+        backup_body = _backup_chat_body(chat_body, app)
+        resp = await send_chat_request(app, backup_body, log, url_override=backup_url, headers_override=backup_headers)
 
     return resp
 
@@ -275,6 +288,15 @@ def _build_backup_headers(app: web.Application) -> dict:
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
+
+
+def _backup_chat_body(chat_body: dict, app: web.Application) -> dict:
+    """Create a copy of chat_body with backup upstream's model name."""
+    body = dict(chat_body)
+    backup_model = app.get("backup_backend_model", "")
+    if backup_model:
+        body["model"] = backup_model
+    return body
 
 
 def extract_usage(data: dict | None) -> dict | None:
