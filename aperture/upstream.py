@@ -11,6 +11,7 @@ from aiohttp import web, ClientResponse, ClientError, ClientConnectionError
 
 from .helpers import cors_headers
 from .middleware.logger import Logger
+from .upstream_limiter import UpstreamRateLimiter
 
 
 def build_upstream_url(app: web.Application) -> str:
@@ -70,6 +71,28 @@ async def send_chat_request(
         )
 
     timeout_ms = app.get("request_timeout", 120000)
+
+    # Rate limit — acquire token before sending
+    limiter: UpstreamRateLimiter | None = app.get("_upstream_limiter")
+    if limiter:
+        allowed = await limiter.acquire()
+        if not allowed:
+            if log:
+                log.warn("upstream.rate_limited", {
+                    "url": url,
+                    "model": model,
+                })
+            return web.json_response(
+                {
+                    "error": {
+                        "message": "Upstream rate limit exceeded. Try again later.",
+                        "type": "rate_limit_error",
+                        "code": "UPSTREAM_RATE_LIMITED",
+                    },
+                },
+                status=429,
+                headers=cors_headers(),
+            )
 
     try:
         resp = await client.post(url, json=chat_body, headers=headers)

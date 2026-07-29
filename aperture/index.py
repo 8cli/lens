@@ -18,6 +18,7 @@ from .middleware.logger import Logger, configure_log_file
 from .handlers.chat import handle_chat_completions
 from .handlers.responses import handle_responses_api
 from .handlers.anthropic import handle_anthropic_messages
+from .upstream_limiter import UpstreamRateLimiter
 
 
 VERSION = "1.0.0"
@@ -251,6 +252,11 @@ def create_app() -> web.Application:
     app["request_timeout"] = int(os.environ.get("REQUEST_TIMEOUT_MS", "120000"))
     app["cb_threshold"] = int(os.environ.get("CB_THRESHOLD", "3"))
     app["cb_cooldown_sec"] = int(os.environ.get("CB_COOLDOWN_SEC", "300"))
+
+    upstream_rpm = int(os.environ.get("UPSTREAM_RPM", "0"))
+    if upstream_rpm > 0:
+        app["_upstream_limiter"] = UpstreamRateLimiter(upstream_rpm)
+        print(f"Upstream rate limiter: {upstream_rpm} RPM", flush=True)
 
     app.cleanup_ctx.append(_client_session_ctx)
 
