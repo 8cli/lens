@@ -240,6 +240,8 @@ def create_app() -> web.Application:
 
     app["upstream_base_url"] = os.environ.get("UPSTREAM_BASE_URL", "https://opencode.ai/zen/go/v1")
     app["api_key"] = os.environ.get("API_KEY", "")
+    app["backup_upstream_base_url"] = os.environ.get("BACKUP_UPSTREAM_BASE_URL", "")
+    app["backup_api_key"] = os.environ.get("BACKUP_API_KEY", "")
 
     window_ms = int(os.environ.get("RATE_LIMIT_WINDOW_MS", "60000"))
     max_req = int(os.environ.get("RATE_LIMIT_MAX", "120"))
