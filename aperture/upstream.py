@@ -7,7 +7,7 @@ No Gateway fallback (Cloudflare-specific logic removed).
 import asyncio
 import os
 import time
-from aiohttp import web, ClientResponse, ClientError, ClientConnectionError
+from aiohttp import web, ClientResponse, ClientError, ClientConnectionError, ClientTimeout
 
 from .helpers import cors_headers
 from .middleware.logger import Logger
@@ -71,6 +71,7 @@ async def send_chat_request(
         )
 
     timeout_ms = app.get("request_timeout", 120000)
+    nvidia_timeout_ms = app.get("nvidia_timeout_ms", 300000)
 
     # Rate limit — only for NVIDIA API (integrate.api.nvidia.com has 40 RPM limit)
     # Other upstreams (sensenova, opencode, etc.) are not rate-limited here.
@@ -85,7 +86,11 @@ async def send_chat_request(
         await semaphore.acquire()
 
     try:
-        resp = await client.post(url, json=chat_body, headers=headers)
+        if is_nvidia:
+            resp = await client.post(url, json=chat_body, headers=headers,
+                                     timeout=ClientTimeout(total=nvidia_timeout_ms / 1000.0))
+        else:
+            resp = await client.post(url, json=chat_body, headers=headers)
         if log:
             log.info("upstream.response", {
                 "url": url,
@@ -95,16 +100,17 @@ async def send_chat_request(
         return resp
 
     except asyncio.TimeoutError:
+        effective_timeout = nvidia_timeout_ms if is_nvidia else timeout_ms
         if log:
             log.error("upstream.timeout", {
                 "url": url,
-                "timeout_ms": timeout_ms,
+                "timeout_ms": effective_timeout,
                 "model": model,
             })
         return web.json_response(
             {
                 "error": {
-                    "message": f"Upstream request timed out after {timeout_ms}ms",
+                    "message": f"Upstream request timed out after {effective_timeout}ms",
                     "type": "timeout_error",
                     "code": "UPSTREAM_TIMEOUT",
                 },
