@@ -30,7 +30,7 @@
 - **速率限制** — 滑动窗口限流器，可配置窗口和最大请求数
 - **CORS** — 可配置的跨域请求头
 - **主备回退** — 上游超时/断连/5xx 时自动切换到备用上游重试
-- **一键切换** — `scripts/swap-upstream.sh` 一键互换主备上游
+- **一键切换** — `swap-upstream.sh` 一键互换主备上游
 - **轻量运行** — 仅依赖 `aiohttp`，纯 Python，运行内存约 27MB
 
 ## 快速开始
@@ -59,8 +59,9 @@ python3 -m aperture
 | `APERTURE_HOST` | `0.0.0.0` | 监听地址 |
 | `APERTURE_PORT` | `8080` | 监听端口 |
 | `REQUEST_TIMEOUT_MS` | `120000` | 上游请求超时时间（毫秒） |
-| `RATE_LIMIT_WINDOW_MS` | `60000` | 限流窗口（毫秒） |
-| `RATE_LIMIT_MAX` | `120` | 每窗口最大请求数 |
+| `UPSTREAM_RPM` | `0` | 上游 RPM 限速（0=关闭）。如英伟达免费 API 设为 `40`，超限请求自动排队 |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | 入站限流窗口（毫秒） |
+| `RATE_LIMIT_MAX` | `120` | 入站每窗口最大请求数 |
 | `LOG_DIR` | `/var/log/lens` | 日志目录（10MB 自动轮转） |
 
 ### 主备回退逻辑
@@ -78,7 +79,7 @@ python3 -m aperture
 ### 一键切换主备
 
 ```bash
-sudo scripts/swap-upstream.sh
+sudo ./swap-upstream.sh
 ```
 
 互换主上游和备用上游的配置，重启 Lens 服务。无额外依赖。
