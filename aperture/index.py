@@ -253,7 +253,7 @@ def create_app() -> web.Application:
     app["cb_threshold"] = int(os.environ.get("CB_THRESHOLD", "3"))
     app["cb_cooldown_sec"] = int(os.environ.get("CB_COOLDOWN_SEC", "300"))
 
-    upstream_rpm = int(os.environ.get("UPSTREAM_RPM", "0"))
+    upstream_rpm = int(os.environ.get("UPSTREAM_RPM", "39"))
     if upstream_rpm > 0:
         app["_upstream_limiter"] = UpstreamRateLimiter(upstream_rpm)
         print(f"Upstream rate limiter: {upstream_rpm} RPM", flush=True)
