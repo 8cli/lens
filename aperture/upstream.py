@@ -33,6 +33,8 @@ async def send_chat_request(
     app: web.Application,
     chat_body: dict,
     log: Logger | None = None,
+    url_override: str | None = None,
+    headers_override: dict | None = None,
 ) -> ClientResponse | web.Response:
     """Send a Chat Completions request to the upstream API.
 
@@ -45,8 +47,8 @@ async def send_chat_request(
     - Other client errors → 502 with UPSTREAM_ERROR
     - Unexpected → 502 with INTERNAL_ERROR
     """
-    url = build_upstream_url(app)
-    headers = build_auth_headers(app)
+    url = url_override or build_upstream_url(app)
+    headers = headers_override or build_auth_headers(app)
     client = app.get("client")
     model = chat_body.get("model", "")
 
@@ -154,6 +156,80 @@ async def send_chat_request(
             status=502,
             headers=cors_headers(),
         )
+
+
+async def send_with_fallback(
+    app: web.Application,
+    chat_body: dict,
+    log: Logger | None = None,
+) -> ClientResponse | web.Response:
+    """Send request with primary/backup fallback.
+
+    Tries primary upstream first. If the failure is retryable
+    (timeout, connection error, 5xx) and a backup is configured,
+    retries once on the backup upstream.
+    """
+    # Step 1: Try primary
+    resp = await send_chat_request(app, chat_body, log)
+    if _is_success(resp):
+        return resp
+
+    if _is_retryable(resp) and _has_backup(app):
+        log and log.warn("upstream.fallback", {
+            "reason": _error_code(resp),
+            "from": app.get("upstream_base_url", ""),
+            "to": app.get("backup_upstream_base_url", ""),
+        })
+        backup_url = _build_backup_url(app)
+        backup_headers = _build_backup_headers(app)
+        resp = await send_chat_request(app, chat_body, log, url_override=backup_url, headers_override=backup_headers)
+
+    return resp
+
+
+def _is_success(resp: ClientResponse | web.Response) -> bool:
+    """2xx from upstream is success; web.Response means send_chat_request already errored."""
+    if isinstance(resp, web.Response):
+        return False
+    return resp.status < 400
+
+
+def _is_retryable(resp: ClientResponse | web.Response) -> bool:
+    """Timeout (504), connection error (502), or upstream 5xx."""
+    if isinstance(resp, web.Response):
+        return resp.status in (502, 504)
+    return resp.status >= 500
+
+
+def _error_code(resp: ClientResponse | web.Response) -> str:
+    if isinstance(resp, web.Response):
+        body = resp.body
+        if isinstance(body, bytes):
+            try:
+                import json
+                payload = json.loads(body)
+                return payload.get("error", {}).get("code", f"HTTP_{resp.status}")
+            except Exception:
+                pass
+        return f"HTTP_{resp.status}"
+    return f"HTTP_{resp.status}"
+
+
+def _has_backup(app: web.Application) -> bool:
+    return bool(app.get("backup_upstream_base_url", ""))
+
+
+def _build_backup_url(app: web.Application) -> str:
+    base_url = app.get("backup_upstream_base_url", "")
+    return f"{base_url.rstrip('/')}/chat/completions"
+
+
+def _build_backup_headers(app: web.Application) -> dict:
+    api_key = app.get("backup_api_key", "")
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
 
 
 def extract_usage(data: dict | None) -> dict | None:
