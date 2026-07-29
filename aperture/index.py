@@ -242,6 +242,7 @@ def create_app() -> web.Application:
     app["api_key"] = os.environ.get("API_KEY", "")
     app["backup_upstream_base_url"] = os.environ.get("BACKUP_UPSTREAM_BASE_URL", "")
     app["backup_api_key"] = os.environ.get("BACKUP_API_KEY", "")
+    app["backup_enabled"] = os.environ.get("BACKUP_ENABLED", "true") == "true"
 
     window_ms = int(os.environ.get("RATE_LIMIT_WINDOW_MS", "60000"))
     max_req = int(os.environ.get("RATE_LIMIT_MAX", "120"))

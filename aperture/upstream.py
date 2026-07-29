@@ -216,7 +216,8 @@ def _error_code(resp: ClientResponse | web.Response) -> str:
 
 
 def _has_backup(app: web.Application) -> bool:
-    return bool(app.get("backup_upstream_base_url", ""))
+    enabled = app.get("backup_enabled", True)
+    return enabled and bool(app.get("backup_upstream_base_url", ""))
 
 
 def _build_backup_url(app: web.Application) -> str:
