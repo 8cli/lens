@@ -6,6 +6,7 @@ No Gateway fallback (Cloudflare-specific logic removed).
 
 import asyncio
 import os
+import time
 from aiohttp import web, ClientResponse, ClientError, ClientConnectionError
 
 from .helpers import cors_headers
@@ -163,18 +164,55 @@ async def send_with_fallback(
     chat_body: dict,
     log: Logger | None = None,
 ) -> ClientResponse | web.Response:
-    """Send request with primary/backup fallback.
+    """Send request with primary/backup fallback and circuit breaker.
 
     Tries primary upstream first. If the failure is retryable
     (timeout, connection error, 5xx) and a backup is configured,
     retries once on the backup upstream.
+
+    Circuit breaker: after CB_THRESHOLD consecutive retryable failures
+    on primary, the breaker opens and skips primary for CB_COOLDOWN_SEC
+    seconds, falling back directly. After cooldown, one probe request
+    is sent to primary to see if it recovered.
     """
+    cb_threshold = app.get("cb_threshold", 3)
+    cb_cooldown = app.get("cb_cooldown_sec", 300)
+
+    # Check circuit breaker state
+    cb_open_until = app.get("_cb_open_until", 0.0)
+    cb_failures = app.get("_cb_failures", 0)
+    now = time.time()
+
+    if cb_open_until > now and _has_backup(app):
+        # Breaker open — skip primary, go straight to backup
+        log and log.warn("upstream.circuit_breaker_open", {
+            "failures": cb_failures,
+            "retry_at": cb_open_until,
+            "fallback_to": app.get("backup_upstream_base_url", ""),
+        })
+        backup_url = _build_backup_url(app)
+        backup_headers = _build_backup_headers(app)
+        return await send_chat_request(app, chat_body, log, url_override=backup_url, headers_override=backup_headers)
+
     # Step 1: Try primary
     resp = await send_chat_request(app, chat_body, log)
     if _is_success(resp):
+        # Success — reset breaker
+        app["_cb_failures"] = 0
+        app["_cb_open_until"] = 0.0
         return resp
 
     if _is_retryable(resp) and _has_backup(app):
+        # Retryable failure — increment counter
+        app["_cb_failures"] = cb_failures + 1
+        if app["_cb_failures"] >= cb_threshold:
+            app["_cb_open_until"] = now + cb_cooldown
+            log and log.warn("upstream.circuit_breaker_tripped", {
+                "failures": app["_cb_failures"],
+                "cooldown_sec": cb_cooldown,
+                "open_until": app["_cb_open_until"],
+            })
+
         log and log.warn("upstream.fallback", {
             "reason": _error_code(resp),
             "from": app.get("upstream_base_url", ""),

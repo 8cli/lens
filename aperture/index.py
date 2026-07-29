@@ -249,6 +249,8 @@ def create_app() -> web.Application:
     app["rate_limiter"] = create_rate_limiter(window_ms, max_req)
 
     app["request_timeout"] = int(os.environ.get("REQUEST_TIMEOUT_MS", "120000"))
+    app["cb_threshold"] = int(os.environ.get("CB_THRESHOLD", "3"))
+    app["cb_cooldown_sec"] = int(os.environ.get("CB_COOLDOWN_SEC", "300"))
 
     app.cleanup_ctx.append(_client_session_ctx)
 

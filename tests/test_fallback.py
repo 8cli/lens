@@ -14,10 +14,16 @@ def _make_app(backup_url="", backup_key="", **overrides):
         "request_timeout": 30000,
         "backup_upstream_base_url": backup_url,
         "backup_api_key": backup_key,
+        "cb_threshold": 3,
+        "cb_cooldown_sec": 300,
+        "_cb_failures": 0,
+        "_cb_open_until": 0.0,
     }
     if overrides:
         base.update(overrides)
     app = MagicMock()
+    app.__getitem__ = lambda s, key: base[key]
+    app.__setitem__ = lambda s, key, val: base.update({key: val})
     def get_side(key, default=None):
         return base.get(key, default)
     app.get.side_effect = get_side
@@ -144,3 +150,72 @@ async def test_fallback_primary_connection_error():
 
     assert resp.status == 200
     assert session.post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_trips_after_3_failures():
+    """3 consecutive failures → breaker opens, subsequent requests skip primary."""
+    fail_resp = MagicMock(status=502, ok=False)
+    backup_resp = MagicMock(status=200, ok=True)
+
+    app = _make_app("http://backup.test/v1", "sk-backup", cb_threshold=3, cb_cooldown_sec=300)
+
+    for i in range(3):
+        session = MagicMock()
+        session.post = AsyncMock(side_effect=[fail_resp, backup_resp])
+        app["client"] = session
+        resp = await send_with_fallback(app, {"model": "test"})
+        assert resp.status == 200
+        assert session.post.call_count == 2, f"Request {i+1} should try both"
+
+    # 4th request: breaker should be open, skip primary, go straight to backup
+    session = MagicMock()
+    session.post = AsyncMock(side_effect=[backup_resp])
+    app["client"] = session
+    resp = await send_with_fallback(app, {"model": "test"})
+    assert resp.status == 200
+    assert session.post.call_count == 1, "Breaker open: should skip primary, only call backup"
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_resets_on_success():
+    """Successful request resets the breaker counter."""
+    fail_resp = MagicMock(status=502, ok=False)
+    backup_resp = MagicMock(status=200, ok=True)
+    success_resp = MagicMock(status=200, ok=True)
+
+    app = _make_app("http://backup.test/v1", "sk-backup", cb_threshold=3, cb_cooldown_sec=300)
+
+    # 2 failures to pre-heat counter
+    session = MagicMock()
+    session.post = AsyncMock(side_effect=[fail_resp, backup_resp])
+    app["client"] = session
+    await send_with_fallback(app, {"model": "test"})
+
+    session = MagicMock()
+    session.post = AsyncMock(side_effect=[fail_resp, backup_resp])
+    app["client"] = session
+    await send_with_fallback(app, {"model": "test"})
+    assert app["_cb_failures"] == 2, "Should have 2 recorded failures"
+
+    # Now primary succeeds — resets counter
+    session = MagicMock()
+    session.post = AsyncMock(side_effect=[success_resp])
+    app["client"] = session
+    resp = await send_with_fallback(app, {"model": "test"})
+    assert resp.status == 200
+    assert app["_cb_failures"] == 0, "Success should reset failure counter"
+    assert app["_cb_open_until"] == 0.0, "Success should close breaker"
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_no_backup_ignored():
+    """Without backup, breaker never opens — just returns error."""
+    session = MagicMock()
+    session.post = AsyncMock(side_effect=asyncio.TimeoutError())
+
+    app = _make_app(backup_url="", backup_key="", client=session)
+    for _ in range(5):
+        resp = await send_with_fallback(app, {"model": "test"})
+        assert resp.status == 504
+    assert app["_cb_failures"] == 0, "No backup configured — counter should remain 0"
