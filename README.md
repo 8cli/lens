@@ -59,7 +59,7 @@ python3 -m aperture
 | `APERTURE_HOST` | `0.0.0.0` | 监听地址 |
 | `APERTURE_PORT` | `8080` | 监听端口 |
 | `REQUEST_TIMEOUT_MS` | `120000` | 上游请求超时时间（毫秒） |
-| `UPSTREAM_RPM` | `0` | 上游 RPM 限速（0=关闭）。如英伟达免费 API 设为 `40`，超限请求自动排队 |
+| `UPSTREAM_RPM` | `39` | 上游 RPM 限速（0=关闭）。超限请求自动排队等待，不会返回 429 |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | 入站限流窗口（毫秒） |
 | `RATE_LIMIT_MAX` | `120` | 入站每窗口最大请求数 |
 | `LOG_DIR` | `/var/log/lens` | 日志目录（10MB 自动轮转） |
