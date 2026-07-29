@@ -5,7 +5,7 @@ from typing import AsyncIterator
 from aiohttp import web
 
 from ..config import map_model_name, CHAT_DISPLAY_MODEL
-from ..upstream import send_chat_request
+from ..upstream import send_with_fallback
 from ..stream import pipe_sse_raw
 from ..translators.dsml import normalize_dsml_tool_calls
 from ..helpers import error_response, cors_headers
@@ -95,7 +95,7 @@ async def handle_chat_completions(body: dict, request: web.Request) -> web.Respo
     if log:
         log.info("model.mapped", {"from": original_model, "to": body["model"]})
 
-    upstream_response = await send_chat_request(app, body, log)
+    upstream_response = await send_with_fallback(app, body, log)
 
     if isinstance(upstream_response, web.Response):
         return upstream_response

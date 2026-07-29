@@ -3,7 +3,7 @@
 from aiohttp import web
 
 from ..config import map_model_name, RESPONSES_DISPLAY_MODEL
-from ..upstream import send_chat_request
+from ..upstream import send_with_fallback
 from ..stream import pipe_sse
 from ..translators.responses import translate_to_chat, translate_stream_events, translate_response_json
 from ..helpers import uid, now, cors_headers
@@ -21,7 +21,7 @@ async def handle_responses_api(body: dict, request: web.Request) -> web.Response
     if log:
         log.info("model.mapped", {"from": original_model, "to": chat_req["model"]})
 
-    upstream_response = await send_chat_request(app, chat_req, log)
+    upstream_response = await send_with_fallback(app, chat_req, log)
 
     if isinstance(upstream_response, web.Response):
         return upstream_response

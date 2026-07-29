@@ -3,7 +3,7 @@
 from aiohttp import web
 
 from ..config import map_model_name, ANTHROPIC_DISPLAY_MODEL
-from ..upstream import send_chat_request
+from ..upstream import send_with_fallback
 from ..stream import pipe_sse
 from ..translators.anthropic import (
     translate_anthropic_to_chat,
@@ -27,7 +27,7 @@ async def handle_anthropic_messages(body: dict, request: web.Request) -> web.Res
     if log:
         log.info("model.mapped", {"from": original_model, "to": f"{chat_req['model']} (display: {display_model})"})
 
-    upstream_response = await send_chat_request(app, chat_req, log)
+    upstream_response = await send_with_fallback(app, chat_req, log)
 
     if isinstance(upstream_response, web.Response):
         return upstream_response
