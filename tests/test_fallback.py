@@ -1,10 +1,9 @@
 """Tests for upstream fallback logic."""
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from aiohttp import web, ClientConnectionError
 from aperture.upstream import send_with_fallback, send_chat_request
-from aperture.middleware.logger import Logger
 
 
 def _make_app(backup_url="", backup_key="", **overrides):

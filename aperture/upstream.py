@@ -188,7 +188,7 @@ async def send_with_fallback(
 
 
 def _is_success(resp: ClientResponse | web.Response) -> bool:
-    """2xx from upstream is success; web.Response means send_chat_request already errored."""
+    """< 400 from upstream is success; web.Response means send_chat_request already errored."""
     if isinstance(resp, web.Response):
         return False
     return resp.status < 400
