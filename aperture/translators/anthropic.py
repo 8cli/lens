@@ -209,10 +209,7 @@ def translate_anthropic_to_chat(body: dict, env: dict | None = None) -> dict:
             "budget_tokens": thinking.get("budget_tokens", 2048),
         }
 
-    # Metadata
-    metadata = body.get("metadata")
-    if isinstance(metadata, dict) and "user_id" in metadata:
-        chat["user_id"] = metadata["user_id"]
+    # Metadata (user_id not forwarded — NVIDIA rejects non-standard params)
 
     return chat
 
