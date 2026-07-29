@@ -13,13 +13,13 @@ from ..helpers import error_response, cors_headers
 
 async def filter_chat_stream(response) -> AsyncIterator[str]:
     """Filter SSE stream to strip non-standard fields (reasoning_content, null content)."""
-    MAX_BUF = 2 * 1024 * 1024
+    MAX_BUF = 0  # Unlimited — Lens controls request body size via client_max_size=0
     buf = b""
     total = 0
 
     async for chunk in response.content:
         total += len(chunk)
-        if total > MAX_BUF:
+        if MAX_BUF > 0 and total > MAX_BUF:
             raise RuntimeError("SSE buffer exceeded maximum size")
 
         buf += chunk

@@ -14,7 +14,7 @@ from aiohttp import web, ClientResponse
 
 from .helpers import cors_headers
 
-MAX_SSE_BUFFER = 2 * 1024 * 1024  # 2 MB
+MAX_SSE_BUFFER = 0  # Unlimited — Lens controls request body size via client_max_size=0
 
 
 async def stream_sse(response: ClientResponse) -> AsyncIterator[dict]:
@@ -35,7 +35,7 @@ async def stream_sse(response: ClientResponse) -> AsyncIterator[dict]:
 
     async for chunk in response.content:
         total += len(chunk)
-        if total > MAX_SSE_BUFFER:
+        if MAX_SSE_BUFFER > 0 and total > MAX_SSE_BUFFER:
             raise RuntimeError(
                 f"SSE buffer exceeded {MAX_SSE_BUFFER // 1024 // 1024}MB limit "
                 f"({total} bytes consumed)"
