@@ -161,6 +161,67 @@ class TestTranslateToChat:
         assert result["messages"][0]["content"] == "You are Codex, an agent. Follow instructions."
         assert isinstance(result["messages"][0]["content"], str)
 
+    def test_function_call_item_mapped_to_assistant_tool_calls(self):
+        """codex sends executed tool calls back as top-level function_call items
+        (no role field). They must map to an assistant message with tool_calls —
+        otherwise the tool result has no anchor."""
+        body = {
+            "input": [
+                {"role": "user", "content": "Run echo hello"},
+                {
+                    "type": "function_call",
+                    "id": "resp_x/item_1",
+                    "name": "exec_command",
+                    "arguments": '{"cmd": "echo hello"}',
+                    "call_id": "call_123",
+                },
+                {
+                    "type": "function_call_output",
+                    "id": "fco_1",
+                    "call_id": "call_123",
+                    "output": "hello\n",
+                },
+            ],
+        }
+        result = translate_to_chat(body)
+        assert len(result["messages"]) == 3
+        # function_call -> assistant message with tool_calls
+        assert result["messages"][1]["role"] == "assistant"
+        assert result["messages"][1]["content"] is None
+        tc = result["messages"][1]["tool_calls"][0]
+        assert tc["id"] == "call_123"
+        assert tc["type"] == "function"
+        assert tc["function"]["name"] == "exec_command"
+        assert tc["function"]["arguments"] == '{"cmd": "echo hello"}'
+        # function_call_output -> tool message
+        assert result["messages"][2]["role"] == "tool"
+        assert result["messages"][2]["tool_call_id"] == "call_123"
+        assert result["messages"][2]["content"] == "hello\n"
+
+    def test_function_call_output_dict_output_json_encoded(self):
+        """function_call_output.output may be a dict; it must be JSON-encoded
+        into the tool message content string."""
+        body = {
+            "input": [
+                {"role": "user", "content": "hi"},
+                {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": "{}",
+                    "call_id": "call_1",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": {"status": "ok", "data": [1, 2]},
+                },
+            ],
+        }
+        result = translate_to_chat(body)
+        tool_msg = result["messages"][2]
+        assert tool_msg["role"] == "tool"
+        assert json.loads(tool_msg["content"]) == {"status": "ok", "data": [1, 2]}
+
     def test_additional_tools_merged_with_top_level_tools(self):
         body = {
             "input": [

@@ -76,6 +76,38 @@ def translate_to_chat(body: dict) -> dict:
                         additional_tools.append(t)
                 continue
 
+            # codex sends back executed tool calls as top-level items (no role).
+            # Map them to assistant tool_calls so the following tool result
+            # has an anchor; without this, upstreams re-request the same tool
+            # call in a loop (tool result appears orphaned).
+            if mtype == "function_call":
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": msg.get("call_id", uid("call")),
+                        "type": "function",
+                        "function": {
+                            "name": msg.get("name", ""),
+                            "arguments": msg.get("arguments", ""),
+                        },
+                    }],
+                })
+                continue
+
+            # codex sends tool execution results back as function_call_output.
+            # Map to a chat tool message so the upstream sees the result.
+            if mtype == "function_call_output":
+                output = msg.get("output", "")
+                if not isinstance(output, str):
+                    output = json.dumps(output)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": msg.get("call_id", ""),
+                    "content": output,
+                })
+                continue
+
             # developer messages (codex system prompt) -> system, since many
             # compatible upstreams reject the developer role. content arrives as
             # [{"type":"input_text","text":"..."}] blocks — flatten to a string,
