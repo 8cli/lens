@@ -284,6 +284,98 @@ class TestTranslateToChat:
         assert assistants[0]["content"] == "Let me check"
         assert len(assistants[0]["tool_calls"]) == 1
 
+    def test_orphan_function_calls_without_results_dropped(self):
+        """function_call items with no matching function_call_output must be
+        dropped. Codex failure loops accumulate calls that never produced a
+        result; strict upstreams reject assistant tool_calls with no following
+        tool message (HTTP 400 'Upstream request failed')."""
+        body = {
+            "input": [
+                {"role": "user", "content": "Do something"},
+                {
+                    "type": "function_call",
+                    "name": "exec",
+                    "arguments": '{"cmd": "true"}',
+                    "call_id": "call_orphan_1",
+                },
+                {
+                    "type": "function_call",
+                    "name": "exec",
+                    "arguments": '{"cmd": "echo ok"}',
+                    "call_id": "call_orphan_2",
+                },
+            ],
+        }
+        result = translate_to_chat(body)
+        # No tool_calls, no tool messages — orphans fully dropped
+        assert all("tool_calls" not in m for m in result["messages"])
+        assert all(m["role"] != "tool" for m in result["messages"])
+        assert len(result["messages"]) == 1  # only the user message
+
+    def test_partial_orphan_function_calls_dropped_paired_kept(self):
+        """Mixed case: 3 function_calls but only 2 results. The orphan call is
+        dropped; the paired two are kept as one assistant + two tool messages."""
+        body = {
+            "input": [
+                {"role": "user", "content": "Run commands"},
+                {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": '{"cmd": "ls"}',
+                    "call_id": "call_ok_1",
+                },
+                {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": '{"cmd": "pwd"}',
+                    "call_id": "call_ok_2",
+                },
+                {
+                    "type": "function_call",
+                    "name": "exec",
+                    "arguments": '{"cmd": "true"}',
+                    "call_id": "call_orphan",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_ok_1",
+                    "output": "a\n",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_ok_2",
+                    "output": "b\n",
+                },
+            ],
+        }
+        result = translate_to_chat(body)
+        assistants = [m for m in result["messages"] if m["role"] == "assistant"]
+        tools = [m for m in result["messages"] if m["role"] == "tool"]
+        assert len(assistants) == 1
+        assert len(assistants[0]["tool_calls"]) == 2
+        assert [tc["id"] for tc in assistants[0]["tool_calls"]] == [
+            "call_ok_1", "call_ok_2",
+        ]
+        assert len(tools) == 2
+        assert all("call_orphan" not in str(m) for m in result["messages"])
+
+    def test_function_call_output_without_call_dropped(self):
+        """A function_call_output with no matching function_call (reverse
+        orphan) must be dropped — an unanchored tool message is rejected."""
+        body = {
+            "input": [
+                {"role": "user", "content": "hi"},
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_ghost",
+                    "output": "result\n",
+                },
+            ],
+        }
+        result = translate_to_chat(body)
+        assert all(m["role"] != "tool" for m in result["messages"])
+        assert len(result["messages"]) == 1
+
     def test_function_call_output_dict_output_json_encoded(self):
         """function_call_output.output may be a dict; it must be JSON-encoded
         into the tool message content string."""

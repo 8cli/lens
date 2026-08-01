@@ -61,6 +61,22 @@ def translate_to_chat(body: dict) -> dict:
         messages.append({"role": "user", "content": inp})
 
     elif isinstance(inp, list):
+        # Pre-scan: collect call_ids that have a function_call_output result.
+        # Strict upstreams (opencode gateway since the DeepSeek 0731 routing
+        # change) reject assistant tool_calls without a matching tool message.
+        # codex failure loops can accumulate function_call items that never
+        # produced a result (e.g. `exec` invoked with an incompatible payload);
+        # those orphan calls must NOT be translated into visible tool_calls.
+        fco_ids = {
+            msg.get("call_id")
+            for msg in inp
+            if isinstance(msg, dict) and msg.get("type") == "function_call_output" and msg.get("call_id")
+        }
+        fc_ids = {
+            msg.get("call_id")
+            for msg in inp
+            if isinstance(msg, dict) and msg.get("type") == "function_call" and msg.get("call_id")
+        }
         for msg in inp:
             if not isinstance(msg, dict):
                 continue
@@ -81,6 +97,10 @@ def translate_to_chat(body: dict) -> dict:
             # has an anchor; without this, upstreams re-request the same tool
             # call in a loop (tool result appears orphaned).
             if mtype == "function_call":
+                # Skip orphan calls that have no matching result — upstream
+                # rejects assistant tool_calls without a following tool message.
+                if msg.get("call_id") not in fco_ids:
+                    continue
                 tool_call = {
                     "id": msg.get("call_id", uid("call")),
                     "type": "function",
@@ -112,6 +132,10 @@ def translate_to_chat(body: dict) -> dict:
             # codex sends tool execution results back as function_call_output.
             # Map to a chat tool message so the upstream sees the result.
             if mtype == "function_call_output":
+                # Skip results without a matching function_call — an unanchored
+                # tool message is rejected by strict upstreams.
+                if msg.get("call_id") not in fc_ids:
+                    continue
                 output = msg.get("output", "")
                 if not isinstance(output, str):
                     output = json.dumps(output)
