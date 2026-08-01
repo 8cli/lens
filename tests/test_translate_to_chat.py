@@ -198,6 +198,92 @@ class TestTranslateToChat:
         assert result["messages"][2]["tool_call_id"] == "call_123"
         assert result["messages"][2]["content"] == "hello\n"
 
+    def test_consecutive_function_calls_merged_into_one_assistant_message(self):
+        """Multiple consecutive function_call items must merge into a SINGLE
+        assistant message carrying all tool_calls. Strict upstreams (DeepSeek
+        official via opencode gateway, since the 0731 routing change) reject
+        back-to-back assistant(tool_calls) messages (observed as HTTP 400
+        'Upstream request failed' on codex multi-command rounds)."""
+        body = {
+            "input": [
+                {"role": "user", "content": "Run three commands"},
+                {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": '{"cmd": "ls"}',
+                    "call_id": "call_1",
+                },
+                {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": '{"cmd": "pwd"}',
+                    "call_id": "call_2",
+                },
+                {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": '{"cmd": "whoami"}',
+                    "call_id": "call_3",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "a\n",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_2",
+                    "output": "b\n",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_3",
+                    "output": "c\n",
+                },
+            ],
+        }
+        result = translate_to_chat(body)
+        # ONE assistant message with 3 tool_calls, then 3 tool messages
+        assistants = [m for m in result["messages"] if m["role"] == "assistant"]
+        assert len(assistants) == 1
+        assert len(assistants[0]["tool_calls"]) == 3
+        assert [tc["id"] for tc in assistants[0]["tool_calls"]] == [
+            "call_1", "call_2", "call_3",
+        ]
+        tools = [m for m in result["messages"] if m["role"] == "tool"]
+        assert len(tools) == 3
+        assert tools[0]["tool_call_id"] == "call_1"
+
+    def test_function_call_after_assistant_text_merges_tool_calls(self):
+        """A function_call item directly after an assistant message (with text)
+        must attach tool_calls to that message, not emit a second consecutive
+        assistant message — strict upstreams reject consecutive assistants."""
+        body = {
+            "input": [
+                {"role": "user", "content": "Check something"},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Let me check"}],
+                },
+                {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": '{"cmd": "ls"}',
+                    "call_id": "call_1",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "out\n",
+                },
+            ],
+        }
+        result = translate_to_chat(body)
+        assistants = [m for m in result["messages"] if m["role"] == "assistant"]
+        assert len(assistants) == 1
+        assert assistants[0]["content"] == "Let me check"
+        assert len(assistants[0]["tool_calls"]) == 1
+
     def test_function_call_output_dict_output_json_encoded(self):
         """function_call_output.output may be a dict; it must be JSON-encoded
         into the tool message content string."""

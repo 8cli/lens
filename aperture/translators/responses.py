@@ -81,18 +81,32 @@ def translate_to_chat(body: dict) -> dict:
             # has an anchor; without this, upstreams re-request the same tool
             # call in a loop (tool result appears orphaned).
             if mtype == "function_call":
-                messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{
-                        "id": msg.get("call_id", uid("call")),
-                        "type": "function",
-                        "function": {
-                            "name": msg.get("name", ""),
-                            "arguments": msg.get("arguments", ""),
-                        },
-                    }],
-                })
+                tool_call = {
+                    "id": msg.get("call_id", uid("call")),
+                    "type": "function",
+                    "function": {
+                        "name": msg.get("name", ""),
+                        "arguments": msg.get("arguments", ""),
+                    },
+                }
+                # Merge with a preceding assistant message instead of emitting
+                # consecutive assistant-tool_calls messages: strict upstreams
+                # (e.g. DeepSeek official via opencode gateway, since the
+                # 0731 routing change) reject N assistant(tool_calls) messages
+                # back-to-back. Canonical form: ONE assistant message carrying
+                # all tool_calls, followed by the tool results.
+                if messages and messages[-1]["role"] == "assistant":
+                    last = messages[-1]
+                    if "tool_calls" in last:
+                        last["tool_calls"].append(tool_call)
+                    else:
+                        last["tool_calls"] = [tool_call]
+                else:
+                    messages.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [tool_call],
+                    })
                 continue
 
             # codex sends tool execution results back as function_call_output.
@@ -153,7 +167,7 @@ def translate_to_chat(body: dict) -> dict:
                         if not isinstance(block, dict):
                             continue
                         btype = block.get("type", "")
-                        if btype == "output_text":
+                        if btype in ("output_text", "input_text"):
                             text_parts.append(block.get("text", ""))
                         elif btype == "function_call":
                             tool_calls.append({
