@@ -12,6 +12,32 @@ from ..helpers import uid, now, extract_text
 from ..stream import stream_sse
 
 
+def _normalize_tool(t: dict) -> dict | None:
+    """Normalize a tool definition to Chat Completions function format.
+
+    Handles both flat {"name": ..., "parameters": ...} and nested
+    {"function": {...}} forms, plus codex's {"type":"custom", "input_schema": ...}.
+
+    Empty or invalid parameters ({}) are normalized to a valid JSON Schema —
+    Console Go upstreams reject {} with 400 "Upstream request failed".
+    """
+    fn = t.get("function", t)
+    name = fn.get("name", "")
+    if not name:
+        return None
+    params = fn.get("parameters", fn.get("input_schema", {}))
+    if not isinstance(params, dict) or not params.get("type"):
+        params = {"type": "object", "properties": {}}
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": fn.get("description", ""),
+            "parameters": params,
+        },
+    }
+
+
 def translate_to_chat(body: dict) -> dict:
     """Translate an OpenAI Responses API request to Chat Completions format.
 
@@ -30,6 +56,7 @@ def translate_to_chat(body: dict) -> dict:
 
     # Input -> user messages
     inp = body.get("input", "")
+    additional_tools: list[dict] = []
     if isinstance(inp, str):
         messages.append({"role": "user", "content": inp})
 
@@ -37,8 +64,35 @@ def translate_to_chat(body: dict) -> dict:
         for msg in inp:
             if not isinstance(msg, dict):
                 continue
+            mtype = msg.get("type", "")
             role = msg.get("role", "user")
             content = msg.get("content", "")
+
+            # codex CLI sends tool definitions as additional_tools (role: developer);
+            # extract them so upstream knows tools are available.
+            if mtype == "additional_tools":
+                for t in msg.get("tools", []):
+                    if isinstance(t, dict):
+                        additional_tools.append(t)
+                continue
+
+            # developer messages (codex system prompt) -> system, since many
+            # compatible upstreams reject the developer role. content arrives as
+            # [{"type":"input_text","text":"..."}] blocks — flatten to a string,
+            # upstreams reject list content on system messages.
+            if role == "developer":
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list):
+                    text = "".join(
+                        b.get("text", "") for b in content
+                        if isinstance(b, dict) and b.get("type") == "input_text"
+                    )
+                else:
+                    text = ""
+                if text:
+                    messages.append({"role": "system", "content": text})
+                continue
 
             if role == "user":
                 if isinstance(content, str):
@@ -104,25 +158,24 @@ def translate_to_chat(body: dict) -> dict:
     # Both Responses API and Chat Completions use:
     #   {"type":"function", "function":{"name":"...", "description":"...", "parameters":{...}}}
     # Also handle legacy flat format: {"name":"...", "description":"...", "parameters":{...}}
+    # codex CLI may send tools via input[].additional_tools (type: custom) — merge those too.
+    tools = []
     if "tools" in body and body["tools"]:
-        tools = []
         for t in body["tools"]:
             if not isinstance(t, dict):
                 continue
             ttype = t.get("type", "")
             if ttype == "function" or (t.get("name") and not ttype) or not ttype:
-                fn = t.get("function", t)
-                tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": fn.get("name", ""),
-                        "description": fn.get("description", ""),
-                        "parameters": fn.get("parameters", fn.get("input_schema", {})),
-                    },
-                })
-        if tools:
-            chat["tools"] = tools
-            chat["tool_choice"] = body.get("tool_choice", "auto")
+                norm = _normalize_tool(t)
+                if norm:
+                    tools.append(norm)
+    for t in additional_tools:
+        norm = _normalize_tool(t)
+        if norm:
+            tools.append(norm)
+    if tools:
+        chat["tools"] = tools
+        chat["tool_choice"] = body.get("tool_choice", "auto")
 
     # Metadata
     metadata = body.get("metadata")
@@ -163,6 +216,7 @@ async def translate_stream_events(
     accumulated_text = ""
     last_finish_reason = None
     tool_call_items: dict[int, dict] = {}
+    arguments_done_sent: set[int] = set()
 
     async for chunk in stream_sse(response):
         for choice in chunk.get("choices", []):
@@ -243,6 +297,7 @@ async def translate_stream_events(
                         }
 
                     if finish_reason in ("tool_calls", "stop"):
+                        arguments_done_sent.add(idx)
                         yield {
                             "event": "response.function_call_arguments.done",
                             "data": {
@@ -300,6 +355,18 @@ async def translate_stream_events(
     # Finalize tool call items
     for idx in sorted(tool_call_items):
         item = tool_call_items[idx]
+        # Emit arguments.done if finish_reason never arrived in the same chunk
+        # as the tool call (common upstream pattern: separate final chunk).
+        if idx not in arguments_done_sent:
+            yield {
+                "event": "response.function_call_arguments.done",
+                "data": {
+                    "type": "response.function_call_arguments.done",
+                    "item_id": item["item_id"],
+                    "name": item["name"],
+                    "arguments": item["arguments"],
+                },
+            }
         yield {
             "event": "response.output_item.done",
             "data": {

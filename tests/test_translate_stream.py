@@ -114,3 +114,59 @@ async def test_stream_empty_text_still_completes():
     event_types = [e["event"] for e in events]
     assert "response.completed" in event_types
     assert event_types[-1] == "response.done"
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_call_emits_arguments_done():
+    """Tool call stream where finish_reason arrives in a separate final chunk
+    (common upstream pattern) must still emit response.function_call_arguments.done
+    before response.output_item.done. codex CLI requires this to accept the call."""
+    tool_chunk = json.dumps({
+        "choices": [{"delta": {"tool_calls": [{
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "shell", "arguments": "{\"command\": \"date\"}"},
+        }]}, "index": 0, "finish_reason": None}],
+    })
+    done_chunk = json.dumps({
+        "choices": [{"delta": {}, "index": 0, "finish_reason": "tool_calls"}],
+    })
+    data = f"data: {tool_chunk}\n\ndata: {done_chunk}\n\n"
+    response = MockStreamResponse(data.encode())
+    events = []
+    async for event in translate_stream_events(response, "resp_1", "model-1"):
+        events.append(event)
+
+    event_types = [e["event"] for e in events]
+    assert "response.function_call_arguments.done" in event_types
+    assert "response.output_item.done" in event_types
+    assert "response.completed" in event_types
+    assert (
+        event_types.index("response.function_call_arguments.done")
+        < event_types.index("response.output_item.done")
+        < event_types.index("response.completed")
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_call_arguments_done_not_duplicated():
+    """When finish_reason arrives in the SAME chunk as the tool call, the
+    arguments.done event must be emitted exactly once."""
+    tool_chunk = json.dumps({
+        "choices": [{"delta": {"tool_calls": [{
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "shell", "arguments": "{\"command\": \"date\"}"},
+        }]}, "index": 0, "finish_reason": "tool_calls"}],
+    })
+    data = f"data: {tool_chunk}\n\n"
+    response = MockStreamResponse(data.encode())
+    events = []
+    async for event in translate_stream_events(response, "resp_1", "model-1"):
+        events.append(event)
+
+    done_events = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+    assert len(done_events) == 1
+    assert done_events[0]["data"]["arguments"] == '{"command": "date"}'
