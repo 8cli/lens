@@ -8,6 +8,8 @@ Codex CLI 是 OpenAI 的命令行编程 Agent。其 API 协议为 **OpenAI Respo
 
 ## 配置方法
 
+> 💡 **上下文窗口**：codex 内置注册表默认给 `gpt-5.6-sol` 272K 窗口（非 1M）。如需 1M，在 `config.toml` 顶层加 `model_context_window = 1000000`。完整机制与验证见 [codex-context-window.md](codex-context-window.md)。
+
 ### 1. 安装 Codex CLI（standalone 版）
 
 ```bash
