@@ -102,6 +102,8 @@ env_key = "LENS_API_KEY"
 
 详细配置、踩坑记录与调试方法论见 [docs/codex-cli.md](docs/codex-cli.md)。
 
+**Token 效率**：Lens 是零开销透传，不会造成 token 浪费（实测与直连上游消耗一致）——见 [docs/token-efficiency.md](docs/token-efficiency.md)。
+
 ## 架构
 
 Lens 采用清晰的三层架构：
