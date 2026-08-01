@@ -86,11 +86,29 @@ async def send_chat_request(
         await semaphore.acquire()
 
     try:
+        # Timeout semantics:
+        # - Non-streaming: `total` bounds the whole request — fine, response
+        #   arrives as one body.
+        # - Streaming (SSE): `total` would kill long-running streams that keep
+        #   producing chunks (e.g. deepseek reasoning + long replies) exactly at
+        #   the limit, returning a 200 with a truncated body — which clients
+        #   report as "empty or malformed response". Use `sock_read` instead:
+        #   only fail when the upstream goes silent for the timeout window.
+        stream = bool(chat_body.get("stream"))
         if is_nvidia:
-            resp = await client.post(url, json=chat_body, headers=headers,
-                                     timeout=ClientTimeout(total=nvidia_timeout_ms / 1000.0))
+            nv_sec = nvidia_timeout_ms / 1000.0
+            timeout = ClientTimeout(
+                total=None if stream else nv_sec,
+                sock_read=nv_sec,
+            )
+            resp = await client.post(url, json=chat_body, headers=headers, timeout=timeout)
         else:
-            resp = await client.post(url, json=chat_body, headers=headers)
+            sec = timeout_ms / 1000.0
+            timeout = ClientTimeout(
+                total=None if stream else sec,
+                sock_read=sec,
+            )
+            resp = await client.post(url, json=chat_body, headers=headers, timeout=timeout)
         if log:
             log.info("upstream.response", {
                 "url": url,
