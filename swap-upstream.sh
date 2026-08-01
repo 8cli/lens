@@ -41,9 +41,9 @@ if ! grep -q '^Environment=UPSTREAM_BASE_URL=' "$TEMP_FILE" || ! grep -q '^Envir
     exit 1
 fi
 
-cp "$TEMP_FILE" "$SERVICE_FILE"
-systemctl daemon-reload
-systemctl restart lens
+sudo cp "$TEMP_FILE" "$SERVICE_FILE"
+sudo systemctl daemon-reload
+sudo systemctl restart lens
 
 sleep 1
 if systemctl is-active --quiet lens; then

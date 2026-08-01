@@ -254,6 +254,8 @@ async def translate_stream_events(
                         }
 
     # Finalize text output
+    text_item_id = f"{resp_id}/item_0"
+    output_items = []
     if accumulated_text:
         yield {
             "event": "response.output_text.done",
@@ -264,17 +266,87 @@ async def translate_stream_events(
                 "text": accumulated_text,
             },
         }
+        yield {
+            "event": "response.content_part.done",
+            "data": {
+                "type": "response.content_part.done",
+                "output_index": output_index,
+                "content_index": content_index,
+                "part": {"type": "output_text", "text": accumulated_text},
+            },
+        }
+        yield {
+            "event": "response.output_item.done",
+            "data": {
+                "type": "response.output_item.done",
+                "output_index": output_index,
+                "item": {
+                    "id": text_item_id,
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": accumulated_text}],
+                },
+            },
+        }
+        output_items.append({
+            "id": text_item_id,
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": accumulated_text}],
+        })
+
+    # Finalize tool call items
+    for idx in sorted(tool_call_items):
+        item = tool_call_items[idx]
+        yield {
+            "event": "response.output_item.done",
+            "data": {
+                "type": "response.output_item.done",
+                "output_index": output_index + 1,
+                "item": {
+                    "id": item["item_id"],
+                    "type": "function_call",
+                    "status": "completed",
+                    "name": item["name"],
+                    "call_id": item["call_id"],
+                    "arguments": item["arguments"],
+                },
+            },
+        }
+        output_items.append({
+            "id": item["item_id"],
+            "type": "function_call",
+            "status": "completed",
+            "name": item["name"],
+            "call_id": item["call_id"],
+            "arguments": item["arguments"],
+        })
+
+    # Final response object (shared by response.completed and response.done)
+    final_response = {
+        "id": resp_id,
+        "object": "response",
+        "created_at": now(),
+        "status": "completed",
+        "model": model,
+        "output": output_items,
+    }
+
+    yield {
+        "event": "response.completed",
+        "data": {
+            "type": "response.completed",
+            "response": final_response,
+        },
+    }
 
     yield {
         "event": "response.done",
         "data": {
             "type": "response.done",
-            "response": {
-                "id": resp_id,
-                "object": "response",
-                "status": "completed",
-                "model": model,
-            },
+            "response": final_response,
         },
     }
 

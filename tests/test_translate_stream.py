@@ -69,3 +69,48 @@ async def test_stream_with_text():
     assert "response.content_part.added" in events_by_type
     assert "response.output_text.delta" in events_by_type
     assert events_by_type["response.output_text.delta"]["delta"] == "Hi"
+
+
+@pytest.mark.asyncio
+async def test_stream_ends_with_completed_then_done():
+    """Stream must emit output_text.done -> content_part.done -> output_item.done
+    -> response.completed -> response.done (codex CLI requires response.completed)."""
+    text_chunk = json.dumps({
+        "choices": [{"delta": {"content": "Hi"}, "index": 0, "finish_reason": None}],
+    })
+    done_chunk = json.dumps({
+        "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}],
+    })
+    data = f"data: {text_chunk}\n\ndata: {done_chunk}\n\n"
+    response = MockStreamResponse(data.encode())
+    events = []
+    async for event in translate_stream_events(response, "resp_1", "model-1"):
+        events.append(event)
+
+    event_types = [e["event"] for e in events]
+    assert "response.completed" in event_types
+    assert "response.done" in event_types
+    # response.completed must come before response.done
+    assert event_types.index("response.completed") < event_types.index("response.done")
+    # content_part.done and output_item.done must precede response.completed
+    if "response.content_part.done" in event_types:
+        assert event_types.index("response.content_part.done") < event_types.index("response.completed")
+    if "response.output_item.done" in event_types:
+        assert event_types.index("response.output_item.done") < event_types.index("response.completed")
+
+
+@pytest.mark.asyncio
+async def test_stream_empty_text_still_completes():
+    """Even with no text content, stream must terminate with response.completed + response.done."""
+    done_chunk = json.dumps({
+        "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}],
+    })
+    data = f"data: {done_chunk}\n\n"
+    response = MockStreamResponse(data.encode())
+    events = []
+    async for event in translate_stream_events(response, "resp_1", "model-1"):
+        events.append(event)
+
+    event_types = [e["event"] for e in events]
+    assert "response.completed" in event_types
+    assert event_types[-1] == "response.done"
