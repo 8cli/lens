@@ -84,6 +84,24 @@ sudo ./swap-upstream.sh
 
 互换主上游和备用上游的配置，重启 Lens 服务。无额外依赖。
 
+## Codex CLI 支持
+
+Lens 完整支持 OpenAI Codex CLI（Responses API 协议 + 工具调用）。
+
+```bash
+# 配置 ~/.codex/config.toml
+model = "gpt-5.6-sol"
+model_provider = "lens"
+
+[model_providers.lens]
+name = "Lens"
+base_url = "http://127.0.0.1:8080/v1"
+wire_api = "responses"
+env_key = "LENS_API_KEY"
+```
+
+详细配置、踩坑记录与调试方法论见 [docs/codex-cli.md](docs/codex-cli.md)。
+
 ## 架构
 
 Lens 采用清晰的三层架构：
