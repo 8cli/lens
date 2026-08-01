@@ -125,6 +125,19 @@ codex 客户端等待 `response.completed`，缺失即判定流中断。
 - `function_call` → assistant 消息 + `tool_calls`
 - `function_call_output` → tool 消息（`tool_call_id` + content，dict 输出 JSON 编码）
 
+### 7. 上游严格校验：连续 tool_calls 消息被拒（400 Upstream request failed）
+
+**症状**：codex 多命令轮（一次让模型跑 2+ 个 shell 命令）间歇性报 `Upstream request failed`（HTTP 400）；单命令、简单对话正常。直连上游同样 400。
+
+**根因**：opencode 网关在 2026-07-31（DeepSeek V4-Flash 0731 正式版 + 提供商路由变更）后，对 deepseek-v4-flash 的 chat/completions **严格校验消息序列**：
+- 拒绝**连续多条 `assistant(tool_calls)` 消息**——codex 一次回合发 3 个 `function_call` item，lens 原实现翻译成 3 条连续 assistant 消息，正好踩中
+- 拒绝**裸 `assistant(content: null, 无 tool_calls)` 消息**（lens 忽略 assistant 消息的 `input_text` 块导致）
+- 对 `tool_call_id` 格式敏感（`call_00_...` 通过、`call_x1` 被拒）
+
+**修复**（commit `438dd91`）：`translate_to_chat` 把**连续 function_call items 合并为单条 assistant 消息携带全部 tool_calls**（OpenAI 标准格式），并把 function_call 附加到前置 assistant 文本消息上；assistant content 同时提取 `input_text`/`output_text` 块（防御裸 null）。仅影响连续 fc 场景，单 fc/交错模式行为不变。
+
+**排查方法论**：codex 会话文件 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` 记录完整对话与工具结果（payload 本身就是 item，无 `item` 包装），可**精确重放失败请求**做二分。
+
 ## 已知限制（非 Lens bug）
 
 - **间歇性 `tool exec/apply_patch invoked with incompatible payload`** — codex 的 `exec`（JS 编排工具）schema 为空 `{}`，模型凭系统提示猜 payload 时偶尔生成不匹配的调用。codex 随后会用 shell 工具（exec_command）成功完成任务。**直连 OpenAI 官方 API 同样存在**，属 codex 模型行为。
